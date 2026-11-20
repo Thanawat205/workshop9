@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Agricultural Product Traceability DApp</title>
+  <script src="https://cdn.jsdelivr.net/npm/ethers@6.13.5/dist/ethers.umd.min.js"></script>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 24px; font-family: Arial, sans-serif; background: #f4f6f8; color: #222; }
+    .container { max-width: 1000px; margin: auto; }
+    header { background: #e8f4ed; padding: 28px 36px; border-radius: 10px; margin-bottom: 24px; }
+    h1 { color: #075b35; margin: 0 0 12px; }
+    h2 { margin-top: 0; }
+    h3 { color: #075b35; margin: 0 0 10px; }
+    .panel { background: white; padding: 26px; border-radius: 10px; margin-bottom: 24px; box-shadow: 0 2px 8px #0000000d; }
+    label { display: block; font-weight: bold; margin: 16px 0 8px; }
+    input, textarea, select { width: 100%; padding: 12px; border: 1px solid #ccc; border-radius: 6px; font-size: 14px; }
+    textarea { min-height: 75px; resize: vertical; }
+    button { border: 0; border-radius: 6px; padding: 11px 16px; cursor: pointer; font-size: 14px; font-weight: bold; background: #075b35; color: white; margin: 8px 6px 0 0; }
+    button:hover { background: #064629; }
+    button.secondary { background: #52616b; }
+    button.danger { background: #b83232; }
+    .batch { border: 1px solid #ddd; border-radius: 8px; padding: 18px; margin-top: 16px; background: #fff; }
+    .muted { color: #666; font-size: 13px; overflow-wrap: anywhere; }
+    .status { display: inline-block; padding: 5px 9px; border-radius: 20px; background: #e8edf1; font-size: 12px; font-weight: bold; }
+    .recalled { background: #f9dada; color: #a00; }
+    .notice { color: #8a4b00; background: #fff5df; padding: 12px; border-radius: 6px; }
+    .success { color: #075b35; } .error { color: #b00020; }
+    #message { white-space: pre-wrap; margin: 0 0 18px; }
+    .history { margin: 10px 0; padding-left: 20px; font-size: 14px; }
+    .history li { margin-bottom: 7px; }
+    @media (max-width: 600px) { body { padding: 12px; } header, .panel { padding: 20px; } }
+  </style>
+</head>
+<body>
+<div class="container">
+  <header>
+    <h1>GreenTrace - Agricultural Product Traceability</h1>
+    <p id="walletStatus">Not connected</p>
+    <button id="connectButton" onclick="connectWallet()">Connect Wallet</button>
+    <button class="secondary" onclick="loadBatches()">Refresh Batches</button>
+    <p class="muted">Network: Sepolia Testnet | Read data with Infura, send transactions with MetaMask</p>
+    <p class="muted">66073501 ธนวรรธ ไคล้สา</p>
+    <p class="muted">66062728 ศิกเษณย์ ศรุติสุต</p>
+  </header>
+
+  <p id="message"></p>
+
+  <section class="panel">
+    <h2>1. Register Stakeholder</h2>
+    <p class="muted">System Admin เท่านั้นที่ลงทะเบียน Farmer, Processor, Distributor และ Retailer ได้</p>
+    <label for="stakeholderAddress">Wallet Address</label><input id="stakeholderAddress" placeholder="0x...">
+    <label for="stakeholderName">Name / Organization</label><input id="stakeholderName" placeholder="Green Farm Co., Ltd.">
+    <label for="stakeholderRole">Role</label>
+    <select id="stakeholderRole"><option value="1">Farmer</option><option value="2">Processor</option><option value="3">Distributor</option><option value="4">Retailer</option></select>
+    <button onclick="registerStakeholder()">Register Stakeholder</button>
+  </section>
+
+  <section class="panel">
+    <h2>2. Register Product Batch</h2>
+    <p class="muted">เฉพาะ wallet ที่ถูกลงทะเบียนเป็น Farmer</p>
+    <label for="productCode">Product Batch Code</label><input id="productCode" placeholder="GF-TOM-2026-001">
+    <label for="productName">Product Name</label><input id="productName" placeholder="Organic Cherry Tomato">
+    <label for="harvestDate">Harvest Date</label><input id="harvestDate" type="date">
+    <label for="farmLocation">Farm Location</label><input id="farmLocation" placeholder="Mae Rim, Chiang Mai">
+    <label for="certification">Certification</label><input id="certification" placeholder="GAP / Organic Thailand">
+    <label for="initialNote">Initial Note</label><textarea id="initialNote" placeholder="Example: Harvested at 06:30"></textarea>
+    <button onclick="registerBatch()">Register Product Batch</button>
+  </section>
+
+  <section class="panel">
+    <h2>5. Trace Product History</h2>
+    <label for="batchId">Batch ID</label><input id="batchId" type="number" min="1" placeholder="Example: 1">
+    <button onclick="traceBatch()">Trace Product</button>
+  </section>
+
+  <section class="panel">
+    <h2>Product Batches</h2>
+    <p class="muted">อ่านข้อมูลจาก smart contract ผ่าน MetaMask บัญชีเดียวกับที่เชื่อมต่อ</p>
+    <div id="batchesList">Click Refresh Batches or connect MetaMask to load products.</div>
+  </section>
+</div>
+
+<script>
+  const INFURA_URL = "https://sepolia.infura.io/v3/fbe6510ef5b24166b46007975d04a463";
+  const CONTRACT_ADDRESS = "0x24d1c413e298cd25674ea33e0288b615c94cdb42";
+  const CHAIN_ID = 11155111n;
+  const ABI = [
+    "function owner() view returns (address)", "function batchCount() view returns (uint256)",
+    "function registerStakeholder(address account,string name,uint8 role)",
+    "function registerProductBatch(tuple(string productCode,string productName,string harvestDate,string farmLocation,string certification,string initialStatusNote) input) returns (uint256)",
+    "function transferCustody(uint256 batchId,address nextCustodian,string location,string note)", "function updateProductStatus(uint256 batchId,string status,string location,string note)", "function recallProduct(uint256 batchId,string reason,string instruction)",
+    "function getProductBatch(uint256 batchId) view returns (tuple(uint256 id,string productCode,string productName,string harvestDate,string farmLocation,string certification,address farmer,address currentCustodian,bool recalled,string recallReason,string recallInstruction,uint256 registeredAt))",
+    "function getCustodyHistory(uint256 batchId) view returns (tuple(address from,address to,string location,string note,uint256 timestamp)[])",
+    "function getStatusHistory(uint256 batchId) view returns (tuple(string status,string location,string note,address updatedBy,uint256 timestamp)[])"
+  ];
+  let readProvider, readContract, walletProvider, signer, writeContract, currentAccount = "", adminAccount = "";
+  const $ = id => document.getElementById(id);
+  function showMessage(message, type = "") { $("message").className = type; $("message").textContent = message; }
+  function getErrorMessage(e) { return e?.shortMessage || e?.reason || e?.info?.error?.message || e?.message || String(e); }
+  function shortAddress(a) { return a.slice(0, 6) + "..." + a.slice(-4); }
+  function dateTime(t) { return new Date(Number(t) * 1000).toLocaleString(); }
+  function addText(parent, tag, text, className = "") { const el = document.createElement(tag); el.textContent = text; if (className) el.className = className; parent.appendChild(el); return el; }
+  function requireConfig() { if (!INFURA_URL || INFURA_URL.includes("YOUR_INFURA_API_KEY")) throw new Error("Please put your Infura Sepolia API Key in INFURA_URL first."); if (!ethers.isAddress(CONTRACT_ADDRESS)) throw new Error("Please put your deployed Sepolia contract address in CONTRACT_ADDRESS first."); }
+  async function setupRead() { requireConfig(); readProvider = new ethers.JsonRpcProvider(INFURA_URL); readContract = new ethers.Contract(CONTRACT_ADDRESS, ABI, readProvider); await readContract.batchCount(); adminAccount = await readContract.owner(); }
+  async function connectWallet() {
+    try { requireConfig(); if (!window.ethereum) throw new Error("MetaMask was not found. Please install MetaMask."); walletProvider = new ethers.BrowserProvider(window.ethereum); await window.ethereum.request({ method: "eth_requestAccounts" }); const network = await walletProvider.getNetwork(); if (network.chainId !== CHAIN_ID) throw new Error("Please switch MetaMask to Sepolia Test Network (Chain ID 11155111)."); signer = await walletProvider.getSigner(); currentAccount = await signer.getAddress(); await setupRead(); writeContract = new ethers.Contract(CONTRACT_ADDRESS, ABI, signer); $("walletStatus").textContent = "Connected: " + currentAccount; $("connectButton").textContent = "Wallet Connected"; showMessage("Wallet connected successfully.", "success"); await loadBatches(); }
+    catch (e) { showMessage(getErrorMessage(e), "error"); }
+  }
+  async function ensureWrite() { if (!writeContract || !currentAccount) throw new Error("Please connect MetaMask first."); if ((await walletProvider.getNetwork()).chainId !== CHAIN_ID) throw new Error("Please switch MetaMask to Sepolia."); }
+  async function runTransaction(label, action) { try { await ensureWrite(); showMessage("Please confirm " + label + " in MetaMask..."); const tx = await action(); showMessage("Transaction sent: " + tx.hash + "\nWaiting for confirmation..."); await tx.wait(); showMessage(label + " completed successfully.", "success"); await loadBatches(); } catch (e) { showMessage(label + " failed: " + getErrorMessage(e), "error"); } }
+  async function registerStakeholder() { const address = $("stakeholderAddress").value.trim(), name = $("stakeholderName").value.trim(), role = BigInt($("stakeholderRole").value); if (!ethers.isAddress(address) || !name) return showMessage("Please enter a valid wallet address and name.", "error"); await runTransaction("Register Stakeholder", () => writeContract.registerStakeholder(address, name, role)); }
+  async function registerBatch() { const input = { productCode: $("productCode").value.trim(), productName: $("productName").value.trim(), harvestDate: $("harvestDate").value.trim(), farmLocation: $("farmLocation").value.trim(), certification: $("certification").value.trim(), initialStatusNote: $("initialNote").value.trim() }; if (!input.productCode || !input.productName || !input.harvestDate || !input.farmLocation) return showMessage("Please fill in Product Code, Name, Harvest Date and Farm Location.", "error"); await runTransaction("Register Product Batch", () => writeContract.registerProductBatch(input)); }
+  async function loadBatches() { try { if (!readContract) await setupRead(); const count = await readContract.batchCount(), list = $("batchesList"); list.replaceChildren(); if (count === 0n) { list.textContent = "No product batches found."; return; } for (let i = 1n; i <= count; i++) await renderBatch(i, list); } catch (e) { $("batchesList").textContent = "Unable to load batches: " + getErrorMessage(e); } }
+  async function traceBatch() { const value = $("batchId").value.trim(); if (!value || BigInt(value) < 1n) return showMessage("Please enter a valid Batch ID.", "error"); try { if (!readContract) await setupRead(); const list = $("batchesList"); list.replaceChildren(); await renderBatch(BigInt(value), list); } catch (e) { showMessage("Trace Product failed: " + getErrorMessage(e), "error"); } }
+  async function renderBatch(id, list) {
+    const [batch, custody, history] = await Promise.all([readContract.getProductBatch(id), readContract.getCustodyHistory(id), readContract.getStatusHistory(id)]); const card = document.createElement("div"); card.className = "batch";
+    addText(card, "h3", "#" + batch.id + " - " + batch.productName); addText(card, "p", "Product Code: " + batch.productCode); addText(card, "span", batch.recalled ? "RECALLED" : "Traceable", "status" + (batch.recalled ? " recalled" : ""));
+    addText(card, "p", "Harvest Date: " + batch.harvestDate); addText(card, "p", "Farm Location: " + batch.farmLocation); addText(card, "p", "Certification: " + (batch.certification || "Not specified")); addText(card, "p", "Farmer: " + batch.farmer, "muted"); addText(card, "p", "Current Custodian: " + batch.currentCustodian, "muted");
+    if (batch.recalled) { addText(card, "p", "Recall Reason: " + batch.recallReason, "error"); addText(card, "p", "Instruction: " + batch.recallInstruction, "error"); }
+    addText(card, "h3", "Status History"); const statusList = document.createElement("ul"); statusList.className = "history"; history.forEach(x => addText(statusList, "li", x.status + " | " + x.location + " | " + x.note + " | " + dateTime(x.timestamp))); card.appendChild(statusList);
+    addText(card, "h3", "Custody History"); const custodyList = document.createElement("ul"); custodyList.className = "history"; if (!custody.length) addText(custodyList, "li", "No transfer yet."); else custody.forEach(x => addText(custodyList, "li", shortAddress(x.from) + " → " + shortAddress(x.to) + " | " + x.location + " | " + x.note + " | " + dateTime(x.timestamp))); card.appendChild(custodyList);
+    const mine = currentAccount && currentAccount.toLowerCase() === batch.currentCustodian.toLowerCase(), canRecall = currentAccount && (mine || currentAccount.toLowerCase() === batch.farmer.toLowerCase() || currentAccount.toLowerCase() === adminAccount.toLowerCase()); if (mine && !batch.recalled) { addButton(card, "Transfer Custody", () => transferCustody(batch.id)); addButton(card, "Update Status", () => updateStatus(batch.id), "secondary"); } if (canRecall && !batch.recalled) addButton(card, "Recall Product", () => recallProduct(batch.id), "danger"); list.appendChild(card);
+  }
+  function addButton(parent, label, action, className = "") { const b = document.createElement("button"); b.textContent = label; if (className) b.className = className; b.onclick = action; parent.appendChild(b); }
+  async function transferCustody(id) { const to = prompt("Next custodian wallet address:"); if (!to) return; if (!ethers.isAddress(to.trim())) return showMessage("Invalid wallet address.", "error"); const location = prompt("Transfer location:"); if (!location) return; const note = prompt("Transfer note (optional):") || ""; await runTransaction("Transfer Custody", () => writeContract.transferCustody(id, to.trim(), location.trim(), note.trim())); }
+  async function updateStatus(id) { const status = prompt("New status (example: In transit):"); if (!status) return; const location = prompt("Current location:"); if (!location) return; const note = prompt("Status note (optional):") || ""; await runTransaction("Update Product Status", () => writeContract.updateProductStatus(id, status.trim(), location.trim(), note.trim())); }
+  async function recallProduct(id) { const reason = prompt("Recall reason:"); if (!reason) return; const instruction = prompt("Instruction for receivers/consumers:"); if (!instruction) return; await runTransaction("Recall Product", () => writeContract.recallProduct(id, reason.trim(), instruction.trim())); }
+  if (window.ethereum) { window.ethereum.on("accountsChanged", () => window.location.reload()); window.ethereum.on("chainChanged", () => window.location.reload()); }
+</script>
+</body>
+</html>
